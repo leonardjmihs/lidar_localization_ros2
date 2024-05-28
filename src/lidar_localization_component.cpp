@@ -219,11 +219,11 @@ void PCLLocalization::initializePubSub()
     std::bind(&PCLLocalization::initialPoseReceived, this, std::placeholders::_1));
 
   map_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-    "map", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable(),
+    "map", rclcpp::QoS(rclcpp::KeepLast(1)).durability_volatile().reliable(),
     std::bind(&PCLLocalization::mapReceived, this, std::placeholders::_1));
 
   odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-    "odom", rclcpp::SensorDataQoS(),
+    "odom", rclcpp::QoS(rclcpp::KeepLast(1)).durability_volatile().best_effort(),
     std::bind(&PCLLocalization::odomReceived, this, std::placeholders::_1));
 
   cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -352,6 +352,7 @@ void PCLLocalization::odomReceived(const nav_msgs::msg::Odometry::ConstSharedPtr
   roll += msg->twist.twist.angular.x * dt_odom;
   pitch += msg->twist.twist.angular.y * dt_odom;
   yaw += msg->twist.twist.angular.z * dt_odom;
+  RCLCPP_WARN(this->get_logger(), "Here");
 
   Eigen::Quaterniond quat_eig =
     Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()) *
