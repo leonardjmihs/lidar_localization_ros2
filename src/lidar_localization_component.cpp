@@ -457,6 +457,12 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
   registration_->setInputSource(tmp_ptr);
 
   Eigen::Affine3d affine;
+  geometry_msgs::msg::QuaternionStamped initial_quat;
+  initial_quat.header.stamp = msg->header.stamp;
+  initial_quat.header.frame_id = base_frame_id_;
+  initial_quat.quaternion = corrent_pose_with_cov_stamped_ptr_->pose.pose.orientation;
+  tfbuffer_.transform(initial_quat, initial_quat, msg->header.frame_id);
+  corrent_pose_with_cov_stamped_ptr_->pose.pose.orientation = initial_quat.quaternion;
   tf2::fromMsg(corrent_pose_with_cov_stamped_ptr_->pose.pose, affine);
 
   Eigen::Matrix4f init_guess = affine.matrix().cast<float>();
@@ -478,9 +484,16 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
   }
 
   Eigen::Matrix4f final_transformation = registration_->getFinalTransformation();
+
   Eigen::Matrix3d rot_mat = final_transformation.block<3, 3>(0, 0).cast<double>();
   Eigen::Quaterniond quat_eig(rot_mat);
   geometry_msgs::msg::Quaternion quat_msg = tf2::toMsg(quat_eig);
+  
+  geometry_msgs::msg::QuaternionStamped quat_stamp_msg;
+  quat_stamp_msg.header = msg->header;
+  quat_stamp_msg.quaternion = quat_msg;
+  tfbuffer_.transform(quat_stamp_msg, quat_stamp_msg, base_frame_id_);
+  quat_msg = quat_stamp_msg.quaternion;
 
   corrent_pose_with_cov_stamped_ptr_->header.stamp = msg->header.stamp;
   corrent_pose_with_cov_stamped_ptr_->header.frame_id = global_frame_id_;
@@ -488,18 +501,37 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
   corrent_pose_with_cov_stamped_ptr_->pose.pose.position.y = static_cast<double>(final_transformation(1, 3));
   corrent_pose_with_cov_stamped_ptr_->pose.pose.position.z = static_cast<double>(final_transformation(2, 3));
   corrent_pose_with_cov_stamped_ptr_->pose.pose.orientation = quat_msg;
+
   pose_pub_->publish(*corrent_pose_with_cov_stamped_ptr_);
 
+  // geometry_msgs::msg::TransformStamped transform_stamped;
+  // transform_stamped.header.stamp = msg->header.stamp;
+  // // transform_stamped.header.frame_id = global_frame_id_;
+  // transform_stamped.header.frame_id = odom_frame_id_;
+  // transform_stamped.child_frame_id = base_frame_id_;
+  // // transform_stamped.child_frame_id = odom_frame_id_;
+  // transform_stamped.transform.translation.x = static_cast<double>(final_transformation(0, 3));
+  // transform_stamped.transform.translation.y = static_cast<double>(final_transformation(1, 3));
+  // transform_stamped.transform.translation.z = static_cast<double>(final_transformation(2, 3));
+  // transform_stamped.transform.rotation = quat_msg;
+  // broadcaster_.sendTransform(transform_stamped);
+
   geometry_msgs::msg::TransformStamped transform_stamped;
+  geometry_msgs::msg::PoseStamped odom_to_map;
   transform_stamped.header.stamp = msg->header.stamp;
-  // transform_stamped.header.frame_id = global_frame_id_;
-  transform_stamped.header.frame_id = odom_frame_id_;
-  transform_stamped.child_frame_id = base_frame_id_;
-  // transform_stamped.child_frame_id = odom_frame_id_;
-  transform_stamped.transform.translation.x = static_cast<double>(final_transformation(0, 3));
-  transform_stamped.transform.translation.y = static_cast<double>(final_transformation(1, 3));
-  transform_stamped.transform.translation.z = static_cast<double>(final_transformation(2, 3));
-  transform_stamped.transform.rotation = quat_msg;
+  transform_stamped.header.frame_id = global_frame_id_;
+  transform_stamped.child_frame_id = odom_frame_id_;
+
+  tf2::Transform tmp_tf;
+  geometry_msgs::msg::PoseStamped tmp_tf_inv;
+  tmp_tf_inv.header.frame_id = base_frame_id_;
+  tmp_tf_inv.header.stamp = msg->header.stamp;
+
+  tf2::fromMsg(corrent_pose_with_cov_stamped_ptr_->pose.pose, tmp_tf);
+  tf2::toMsg(tmp_tf.inverse(), tmp_tf_inv.pose);
+  tfbuffer_.transform(tmp_tf_inv, odom_to_map, odom_frame_id_);
+  tf2::impl::Converter<true, false>::convert(odom_to_map.pose, latest_tf_);
+  tf2::impl::Converter<false, true>::convert(latest_tf_.inverse(), transform_stamped.transform);
   broadcaster_.sendTransform(transform_stamped);
 
   geometry_msgs::msg::PoseStamped::SharedPtr pose_stamped_ptr(new geometry_msgs::msg::PoseStamped);
