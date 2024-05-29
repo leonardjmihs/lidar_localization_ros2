@@ -223,7 +223,7 @@ void PCLLocalization::initializePubSub()
     std::bind(&PCLLocalization::mapReceived, this, std::placeholders::_1));
 
   odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-    "odom", rclcpp::QoS(rclcpp::KeepLast(1)).durability_volatile().best_effort(),
+    "odom", rclcpp::QoS(rclcpp::KeepLast(5)).durability_volatile().best_effort(),
     std::bind(&PCLLocalization::odomReceived, this, std::placeholders::_1));
 
   cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -295,6 +295,16 @@ void PCLLocalization::initialPoseReceived(const geometry_msgs::msg::PoseWithCova
   corrent_pose_with_cov_stamped_ptr_ = msg;
   pose_pub_->publish(*corrent_pose_with_cov_stamped_ptr_);
 
+  geometry_msgs::msg::TransformStamped transform_stamped;
+  transform_stamped.header.stamp = msg->header.stamp;
+  transform_stamped.header.frame_id = global_frame_id_;
+  // transform_stamped.child_frame_id = base_frame_id_;
+  transform_stamped.child_frame_id = odom_frame_id_;
+  transform_stamped.transform.translation.x = msg->pose.pose.position.x;
+  transform_stamped.transform.translation.y = msg->pose.pose.position.y;
+  transform_stamped.transform.translation.z = msg->pose.pose.position.z; 
+  transform_stamped.transform.rotation = msg->pose.pose.orientation;
+  broadcaster_.sendTransform(transform_stamped);
   cloudReceived(last_scan_ptr_);
   RCLCPP_INFO(get_logger(), "initialPoseReceived end");
 }
@@ -482,8 +492,10 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
 
   geometry_msgs::msg::TransformStamped transform_stamped;
   transform_stamped.header.stamp = msg->header.stamp;
-  transform_stamped.header.frame_id = global_frame_id_;
+  // transform_stamped.header.frame_id = global_frame_id_;
+  transform_stamped.header.frame_id = odom_frame_id_;
   transform_stamped.child_frame_id = base_frame_id_;
+  // transform_stamped.child_frame_id = odom_frame_id_;
   transform_stamped.transform.translation.x = static_cast<double>(final_transformation(0, 3));
   transform_stamped.transform.translation.y = static_cast<double>(final_transformation(1, 3));
   transform_stamped.transform.translation.z = static_cast<double>(final_transformation(2, 3));
