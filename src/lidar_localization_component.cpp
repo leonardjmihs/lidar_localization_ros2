@@ -430,10 +430,18 @@ void PCLLocalization::imuReceived(const sensor_msgs::msg::Imu::ConstSharedPtr ms
 
 void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
 {
+
   if (!map_recieved_ || !initialpose_recieved_) {return;}
   RCLCPP_INFO(get_logger(), "cloudReceived");
   pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>);
   pcl::fromROSMsg(*msg, *cloud_ptr);
+
+  geometry_msgs::msg::TransformStamped base2lidar = tfbuffer_.lookupTransform(
+    base_frame_id_, msg->header.frame_id, tf2::TimePointZero);
+  tf2::Stamped< tf2::Transform> b2l;
+  tf2::fromMsg(base2lidar, b2l);
+  geometry_msgs::msg::TransformStamped lidar2base;
+  lidar2base.transform = tf2::toMsg(b2l.inverse());
 
   if (use_imu_) {
     double received_time = msg->header.stamp.sec +
@@ -456,12 +464,15 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
   pcl::PointCloud<pcl::PointXYZI>::Ptr tmp_ptr(new pcl::PointCloud<pcl::PointXYZI>(tmp));
   registration_->setInputSource(tmp_ptr);
 
+
   Eigen::Affine3d affine;
   geometry_msgs::msg::QuaternionStamped initial_quat;
+  // initial_quat.header.stamp = msg->header.stamp;
   initial_quat.header.stamp = msg->header.stamp;
   initial_quat.header.frame_id = base_frame_id_;
   initial_quat.quaternion = corrent_pose_with_cov_stamped_ptr_->pose.pose.orientation;
-  tfbuffer_.transform(initial_quat, initial_quat, msg->header.frame_id);
+  tf2::doTransform(initial_quat, initial_quat, base2lidar);
+  // tfbuffer_.transform(initial_quat, initial_quat, msg->header.frame_id);
   corrent_pose_with_cov_stamped_ptr_->pose.pose.orientation = initial_quat.quaternion;
   tf2::fromMsg(corrent_pose_with_cov_stamped_ptr_->pose.pose, affine);
 
@@ -489,11 +500,13 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
   Eigen::Quaterniond quat_eig(rot_mat);
   geometry_msgs::msg::Quaternion quat_msg = tf2::toMsg(quat_eig);
   
-  geometry_msgs::msg::QuaternionStamped quat_stamp_msg;
-  quat_stamp_msg.header = msg->header;
-  quat_stamp_msg.quaternion = quat_msg;
-  tfbuffer_.transform(quat_stamp_msg, quat_stamp_msg, base_frame_id_);
-  quat_msg = quat_stamp_msg.quaternion;
+  // geometry_msgs::msg::QuaternionStamped quat_stamp_msg;
+  // quat_stamp_msg.header = msg->header;
+  // quat_stamp_msg.quaternion = quat_msg;
+  // tfbuffer_.transform(quat_stamp_msg, quat_stamp_msg, base_frame_id_);
+  // quat_msg = quat_stamp_msg.quaternion;
+  
+  tf2::doTransform(quat_msg, quat_msg, lidar2base);
 
   corrent_pose_with_cov_stamped_ptr_->header.stamp = msg->header.stamp;
   corrent_pose_with_cov_stamped_ptr_->header.frame_id = global_frame_id_;
