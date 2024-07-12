@@ -9,6 +9,7 @@ PCLLocalization::PCLLocalization(const rclcpp::NodeOptions & options)
   declare_parameter("global_frame_id", "map");
   declare_parameter("odom_frame_id", "odom");
   declare_parameter("base_frame_id", "base_link");
+  declare_parameter("lidar_frame_id", "base_link");
   declare_parameter("registration_method", "NDT");
   declare_parameter("score_threshold", 2.0);
   declare_parameter("ndt_resolution", 1.0);
@@ -57,6 +58,9 @@ CallbackReturn PCLLocalization::on_activate(const rclcpp_lifecycle::State &)
   pose_pub_->on_activate();
   path_pub_->on_activate();
   initial_map_pub_->on_activate();
+
+  base2lidar =tfbuffer_.lookupTransform(
+    base_frame_id_, lidar_frame_id, tf2::TimePointZero); 
 
   if (set_initial_pose_) {
     auto msg = std::make_shared<geometry_msgs::msg::PoseWithCovarianceStamped>();
@@ -154,6 +158,7 @@ void PCLLocalization::initializeParameters()
   get_parameter("global_frame_id", global_frame_id_);
   get_parameter("odom_frame_id", odom_frame_id_);
   get_parameter("base_frame_id", base_frame_id_);
+  get_parameter("lidar_frame_id", lidar_frame_id);
   get_parameter("registration_method", registration_method_);
   get_parameter("score_threshold", score_threshold_);
   get_parameter("ndt_resolution", ndt_resolution_);
@@ -181,6 +186,7 @@ void PCLLocalization::initializeParameters()
   RCLCPP_INFO(get_logger(),"global_frame_id: %s", global_frame_id_.c_str());
   RCLCPP_INFO(get_logger(),"odom_frame_id: %s", odom_frame_id_.c_str());
   RCLCPP_INFO(get_logger(),"base_frame_id: %s", base_frame_id_.c_str());
+  RCLCPP_INFO(get_logger(),"lidar_frame_id: %s", lidar_frame_id.c_str());
   RCLCPP_INFO(get_logger(),"registration_method: %s", registration_method_.c_str());
   RCLCPP_INFO(get_logger(),"ndt_resolution: %lf", ndt_resolution_);
   RCLCPP_INFO(get_logger(),"ndt_step_size: %lf", ndt_step_size_);
@@ -362,7 +368,6 @@ void PCLLocalization::odomReceived(const nav_msgs::msg::Odometry::ConstSharedPtr
   roll += msg->twist.twist.angular.x * dt_odom;
   pitch += msg->twist.twist.angular.y * dt_odom;
   yaw += msg->twist.twist.angular.z * dt_odom;
-  RCLCPP_WARN(this->get_logger(), "Here");
 
   Eigen::Quaterniond quat_eig =
     Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()) *
@@ -436,8 +441,8 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
   pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>);
   pcl::fromROSMsg(*msg, *cloud_ptr);
 
-  geometry_msgs::msg::TransformStamped base2lidar = tfbuffer_.lookupTransform(
-    base_frame_id_, msg->header.frame_id, tf2::TimePointZero);
+  // geometry_msgs::msg::TransformStamped base2lidar = tfbuffer_.lookupTransform(
+  //   base_frame_id_, msg->header.frame_id, msg->header.stamp);
   tf2::Stamped< tf2::Transform> b2l;
   tf2::fromMsg(base2lidar, b2l);
   geometry_msgs::msg::TransformStamped lidar2base;
@@ -539,10 +544,17 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
   geometry_msgs::msg::PoseStamped tmp_tf_inv;
   tmp_tf_inv.header.frame_id = base_frame_id_;
   tmp_tf_inv.header.stamp = msg->header.stamp;
-
   tf2::fromMsg(corrent_pose_with_cov_stamped_ptr_->pose.pose, tmp_tf);
   tf2::toMsg(tmp_tf.inverse(), tmp_tf_inv.pose);
+  try{
+
   tfbuffer_.transform(tmp_tf_inv, odom_to_map, odom_frame_id_);
+  }
+  catch(tf2::ExtrapolationException& e){
+    std::cout << "Extrapolation Caught" << std::endl;
+    RCLCPP_WARN(this->get_logger(), "Tf2 Time Extrapolation");
+    return;
+  }
   tf2::impl::Converter<true, false>::convert(odom_to_map.pose, latest_tf_);
   tf2::impl::Converter<false, true>::convert(latest_tf_.inverse(), transform_stamped.transform);
   broadcaster_.sendTransform(transform_stamped);

@@ -88,6 +88,7 @@ public:
   pcl::VoxelGrid<pcl::PointXYZI> voxel_grid_filter_;
   geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr corrent_pose_with_cov_stamped_ptr_;
   nav_msgs::msg::Path::SharedPtr path_ptr_;
+  geometry_msgs::msg::TransformStamped base2lidar;
   sensor_msgs::msg::PointCloud2::ConstSharedPtr last_scan_ptr_;
   tf2::Transform latest_tf_;
   bool map_recieved_{false};
@@ -97,6 +98,7 @@ public:
   std::string global_frame_id_;
   std::string odom_frame_id_;
   std::string base_frame_id_;
+  std::string lidar_frame_id;
   std::string registration_method_;
   double scan_max_range_;
   double scan_min_range_;
