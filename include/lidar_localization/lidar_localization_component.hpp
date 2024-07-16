@@ -60,6 +60,8 @@ public:
   void odomReceived(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
   void imuReceived(const sensor_msgs::msg::Imu::ConstSharedPtr msg);
   void cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
+
+  void TimerCb();
   // void gnssReceived();
 
   tf2_ros::TransformBroadcaster broadcaster_;
@@ -84,16 +86,19 @@ public:
   rclcpp::Subscription<sensor_msgs::msg::Imu>::ConstSharedPtr
     imu_sub_;
 
+  rclcpp::TimerBase::SharedPtr update_timer_;
+
   boost::shared_ptr<pcl::Registration<pcl::PointXYZI, pcl::PointXYZI>> registration_;
   pcl::VoxelGrid<pcl::PointXYZI> voxel_grid_filter_;
   geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr corrent_pose_with_cov_stamped_ptr_;
   nav_msgs::msg::Path::SharedPtr path_ptr_;
   geometry_msgs::msg::TransformStamped base2lidar;
   sensor_msgs::msg::PointCloud2::ConstSharedPtr last_scan_ptr_;
+  geometry_msgs::msg::TransformStamped lastTransform;
   tf2::Transform latest_tf_;
   bool map_recieved_{false};
   bool initialpose_recieved_{false};
-
+  bool time_to_localize{false};
   // parameters
   std::string global_frame_id_;
   std::string odom_frame_id_;
@@ -125,7 +130,8 @@ public:
   bool enable_debug_{false};
 
   int ndt_num_threads_;
-
+  int rate_;
+  
   // imu
   LidarUndistortion lidar_undistortion_;
 };
