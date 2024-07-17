@@ -63,8 +63,6 @@ CallbackReturn PCLLocalization::on_activate(const rclcpp_lifecycle::State &)
   path_pub_->on_activate();
   initial_map_pub_->on_activate();
 
-  base2lidar =tfbuffer_.lookupTransform(
-    base_frame_id_, lidar_frame_id, tf2::TimePointZero); 
 
   if (set_initial_pose_) {
     auto msg = std::make_shared<geometry_msgs::msg::PoseWithCovarianceStamped>();
@@ -299,6 +297,7 @@ void PCLLocalization::initializeRegistration()
 void PCLLocalization::initialPoseReceived(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
 {
   RCLCPP_INFO(get_logger(), "initialPoseReceived");
+  
   if (msg->header.frame_id != global_frame_id_) {
     RCLCPP_WARN(this->get_logger(), "initialpose_frame_id does not match global_frame_id");
     return;
@@ -356,10 +355,13 @@ void PCLLocalization::TimerCb()
 
 void PCLLocalization::odomReceived(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
 {
-  if (!use_odom_) {return;}
-  RCLCPP_INFO(get_logger(), "odomReceived");
+  if (!use_odom_ || !initialpose_recieved_) {return;}
+  // RCLCPP_INFO(get_logger(), "odomReceived");
 
-  double current_odom_received_time = msg->header.stamp.sec +
+    lastTransform.header.stamp = msg ->header.stamp;
+    broadcaster_.sendTransform(lastTransform);  
+    
+    double current_odom_received_time = msg->header.stamp.sec +
     msg->header.stamp.nanosec * 1e-9;
   double dt_odom = current_odom_received_time - last_odom_received_time_;
   last_odom_received_time_ = current_odom_received_time;
@@ -403,7 +405,7 @@ void PCLLocalization::odomReceived(const nav_msgs::msg::Odometry::ConstSharedPtr
 
 void PCLLocalization::imuReceived(const sensor_msgs::msg::Imu::ConstSharedPtr msg)
 {
-  if (!use_imu_) {return;}
+  if (!use_imu_ || !initialpose_recieved_) {return;}
 
   sensor_msgs::msg::Imu tf_converted_imu;
 
@@ -449,6 +451,8 @@ void PCLLocalization::imuReceived(const sensor_msgs::msg::Imu::ConstSharedPtr ms
 void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
 {
 
+  base2lidar =tfbuffer_.lookupTransform(
+    base_frame_id_, lidar_frame_id, tf2::TimePointZero); 
   if (!map_recieved_ || !initialpose_recieved_) {return;}
   if (!time_to_localize){
     lastTransform.header.stamp = msg ->header.stamp;
@@ -509,11 +513,11 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
   rclcpp::Time time_align_end = system_clock.now();
 
   bool has_converged = registration_->hasConverged();
-  double fitness_score = registration_->getFitnessScore();
   if (!has_converged) {
     RCLCPP_WARN(get_logger(), "The registration didn't converge.");
     return;
   }
+  double fitness_score = registration_->getFitnessScore();
   if (fitness_score > score_threshold_) {
     RCLCPP_WARN(get_logger(), "The fitness score is over %lf.", score_threshold_);
   }
@@ -562,18 +566,20 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
   tf2::Transform tmp_tf;
   geometry_msgs::msg::PoseStamped tmp_tf_inv;
   tmp_tf_inv.header.frame_id = base_frame_id_;
-  tmp_tf_inv.header.stamp = msg->header.stamp;
+  // tmp_tf_inv.header.stamp = msg->header.stamp;
+  // tmp_tf_inv.header.stamp = tf2::TimePointZero;
   tf2::fromMsg(corrent_pose_with_cov_stamped_ptr_->pose.pose, tmp_tf);
   tf2::toMsg(tmp_tf.inverse(), tmp_tf_inv.pose);
-  try{
+  // try{
 
-  tfbuffer_.transform(tmp_tf_inv, odom_to_map, odom_frame_id_);
-  }
-  catch(tf2::ExtrapolationException& e){
-    std::cout << "Extrapolation Caught" << std::endl;
-    RCLCPP_WARN(this->get_logger(), "Tf2 Time Extrapolation");
-    return;
-  }
+  tfbuffer_.transform(tmp_tf_inv, odom_to_map, odom_frame_id_, 
+      1s);
+  // }
+  // catch(tf2::ExtrapolationException& e){
+  // //   std::cout << "Extrapolation Caught" << std::endl;
+  // //   RCLCPP_WARN(this->get_logger(), "Tf2 Time Extrapolation");
+  // //  return;
+  // }
   tf2::impl::Converter<true, false>::convert(odom_to_map.pose, latest_tf_);
   tf2::impl::Converter<false, true>::convert(latest_tf_.inverse(), transform_stamped.transform);
   broadcaster_.sendTransform(transform_stamped);
