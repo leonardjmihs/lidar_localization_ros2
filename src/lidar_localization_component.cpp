@@ -14,13 +14,12 @@ PCLLocalization::PCLLocalization(const rclcpp::NodeOptions & options)
   declare_parameter("score_threshold", 2.0);
   declare_parameter("ndt_resolution", 1.0);
   declare_parameter("ndt_step_size", 0.1);
-  declare_parameter("rate", 200);
+  declare_parameter("rate", 50);
   declare_parameter("transform_epsilon", 0.01);
   declare_parameter("voxel_leaf_size", 0.2);
   declare_parameter("scan_max_range", 100.0);
   declare_parameter("scan_min_range", 1.0);
   declare_parameter("scan_period", 0.1);
-  declare_parameter("use_pcd_map", false);
   declare_parameter("map_path", "/map/map.pcd");
   declare_parameter("set_initial_pose", false);
   declare_parameter("initial_pose_x", 0.0);
@@ -30,10 +29,7 @@ PCLLocalization::PCLLocalization(const rclcpp::NodeOptions & options)
   declare_parameter("initial_pose_qy", 0.0);
   declare_parameter("initial_pose_qz", 0.0);
   declare_parameter("initial_pose_qw", 1.0);
-  declare_parameter("use_odom", false);
-  declare_parameter("use_imu", false);
   declare_parameter("enable_debug", false);
-  // declare_parameter("rate", 200.0);
 }
 
 using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
@@ -44,12 +40,8 @@ CallbackReturn PCLLocalization::on_configure(const rclcpp_lifecycle::State &)
 
   initializeParameters();
   initializePubSub();
-  initializeRegistration();
-  update_timer_=this->create_wall_timer(  std::chrono::milliseconds(rate_),   
-    std::bind(&PCLLocalization::TimerCb, this));
+  initializeRegistration(); 
 
-  path_ptr_ = std::make_shared<nav_msgs::msg::Path>();
-  path_ptr_->header.frame_id = global_frame_id_;
 
   RCLCPP_INFO(get_logger(), "Configuring end");
   return CallbackReturn::SUCCESS;
@@ -58,9 +50,10 @@ CallbackReturn PCLLocalization::on_configure(const rclcpp_lifecycle::State &)
 CallbackReturn PCLLocalization::on_activate(const rclcpp_lifecycle::State &)
 {
   RCLCPP_INFO(get_logger(), "Activating");
-  time_to_localize=true;
-  pose_pub_->on_activate();
-  path_pub_->on_activate();
+
+  update_timer_=this->create_wall_timer( 
+    std::chrono::milliseconds(rate_),   
+    std::bind(&PCLLocalization::TimerCb, this));
   initial_map_pub_->on_activate();
 
 
@@ -81,33 +74,30 @@ CallbackReturn PCLLocalization::on_activate(const rclcpp_lifecycle::State &)
     pose_stamped->header.stamp = msg->header.stamp;
     pose_stamped->header.frame_id = global_frame_id_;
     pose_stamped->pose = msg->pose.pose;
-    path_ptr_->poses.push_back(*pose_stamped);
 
     initialPoseReceived(msg);
   }
 
-  if (use_pcd_map_) {
-    pcl::PointCloud<pcl::PointXYZI>::Ptr map_cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>);
-    pcl::io::loadPCDFile(map_path_, *map_cloud_ptr);
-    RCLCPP_INFO(get_logger(), "Map Size %ld", map_cloud_ptr->size());
+  pcl::PointCloud<pcl::PointXYZI>::Ptr map_cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>);
+  pcl::io::loadPCDFile(map_path_, *map_cloud_ptr);
+  RCLCPP_INFO(get_logger(), "Map Size %ld", map_cloud_ptr->size());
 
-    sensor_msgs::msg::PointCloud2::SharedPtr map_msg_ptr(new sensor_msgs::msg::PointCloud2);
-    pcl::toROSMsg(*map_cloud_ptr, *map_msg_ptr);
-    map_msg_ptr->header.frame_id = global_frame_id_;
-    initial_map_pub_->publish(*map_msg_ptr);
-    RCLCPP_INFO(get_logger(), "Initial Map Published");
+  sensor_msgs::msg::PointCloud2::SharedPtr map_msg_ptr(new sensor_msgs::msg::PointCloud2);
+  pcl::toROSMsg(*map_cloud_ptr, *map_msg_ptr);
+  map_msg_ptr->header.frame_id = global_frame_id_;
+  initial_map_pub_->publish(*map_msg_ptr);
+  RCLCPP_INFO(get_logger(), "Initial Map Published");
 
-    if (registration_method_ == "GICP" || registration_method_ == "GICP_OMP") {
-      pcl::PointCloud<pcl::PointXYZI>::Ptr filtered_cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>());
-      voxel_grid_filter_.setInputCloud(map_cloud_ptr);
-      voxel_grid_filter_.filter(*filtered_cloud_ptr);
-      registration_->setInputTarget(filtered_cloud_ptr);
-    } else {
-      registration_->setInputTarget(map_cloud_ptr);
-    }
-
-    map_recieved_ = true;
+  if (registration_method_ == "GICP" || registration_method_ == "GICP_OMP") {
+    pcl::PointCloud<pcl::PointXYZI>::Ptr filtered_cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>());
+    voxel_grid_filter_.setInputCloud(map_cloud_ptr);
+    voxel_grid_filter_.filter(*filtered_cloud_ptr);
+    registration_->setInputTarget(filtered_cloud_ptr);
+  } else {
+    registration_->setInputTarget(map_cloud_ptr);
   }
+
+  map_recieved_ = true;
 
   RCLCPP_INFO(get_logger(), "Activating end");
   return CallbackReturn::SUCCESS;
@@ -117,8 +107,6 @@ CallbackReturn PCLLocalization::on_deactivate(const rclcpp_lifecycle::State &)
 {
   RCLCPP_INFO(get_logger(), "Deactivating");
 
-  pose_pub_->on_deactivate();
-  path_pub_->on_deactivate();
   initial_map_pub_->on_deactivate();
 
   RCLCPP_INFO(get_logger(), "Deactivating end");
@@ -130,11 +118,7 @@ CallbackReturn PCLLocalization::on_cleanup(const rclcpp_lifecycle::State &)
   RCLCPP_INFO(get_logger(), "Cleaning Up");
   initial_pose_sub_.reset();
   initial_map_pub_.reset();
-  path_pub_.reset();
-  pose_pub_.reset();
-  odom_sub_.reset();
   cloud_sub_.reset();
-  imu_sub_.reset();
 
   RCLCPP_INFO(get_logger(), "Cleaning Up end");
   return CallbackReturn::SUCCESS;
@@ -172,7 +156,6 @@ void PCLLocalization::initializeParameters()
   get_parameter("scan_max_range", scan_max_range_);
   get_parameter("scan_min_range", scan_min_range_);
   get_parameter("scan_period", scan_period_);
-  get_parameter("use_pcd_map", use_pcd_map_);
   get_parameter("map_path", map_path_);
   get_parameter("set_initial_pose", set_initial_pose_);
   get_parameter("initial_pose_x", initial_pose_x_);
@@ -182,8 +165,6 @@ void PCLLocalization::initializeParameters()
   get_parameter("initial_pose_qy", initial_pose_qy_);
   get_parameter("initial_pose_qz", initial_pose_qz_);
   get_parameter("initial_pose_qw", initial_pose_qw_);
-  get_parameter("use_odom", use_odom_);
-  get_parameter("use_imu", use_imu_);
   get_parameter("enable_debug", enable_debug_);
 
   RCLCPP_INFO(get_logger(),"global_frame_id: %s", global_frame_id_.c_str());
@@ -199,11 +180,8 @@ void PCLLocalization::initializeParameters()
   RCLCPP_INFO(get_logger(),"scan_max_range: %lf", scan_max_range_);
   RCLCPP_INFO(get_logger(),"scan_min_range: %lf", scan_min_range_);
   RCLCPP_INFO(get_logger(),"scan_period: %lf", scan_period_);
-  RCLCPP_INFO(get_logger(),"use_pcd_map: %d", use_pcd_map_);
   RCLCPP_INFO(get_logger(),"map_path: %s", map_path_.c_str());
   RCLCPP_INFO(get_logger(),"set_initial_pose: %d", set_initial_pose_);
-  RCLCPP_INFO(get_logger(),"use_odom: %d", use_odom_);
-  RCLCPP_INFO(get_logger(),"use_imu: %d", use_imu_);
   RCLCPP_INFO(get_logger(),"enable_debug: %d", enable_debug_);
   RCLCPP_INFO(get_logger(),"rate: %d", rate_);
 }
@@ -211,14 +189,6 @@ void PCLLocalization::initializeParameters()
 void PCLLocalization::initializePubSub()
 {
   RCLCPP_INFO(get_logger(), "initializePubSub");
-
-  pose_pub_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
-    "pcl_pose",
-    rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
-
-  path_pub_ = create_publisher<nav_msgs::msg::Path>(
-    "path",
-    rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
 
   initial_map_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
     "initial_map",
@@ -232,17 +202,9 @@ void PCLLocalization::initializePubSub()
     "map", rclcpp::QoS(rclcpp::KeepLast(1)).durability_volatile().reliable(),
     std::bind(&PCLLocalization::mapReceived, this, std::placeholders::_1));
 
-  odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-    "odom", rclcpp::QoS(rclcpp::KeepLast(5)).durability_volatile().best_effort(),
-    std::bind(&PCLLocalization::odomReceived, this, std::placeholders::_1));
-
   cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
     "velodyne_points", rclcpp::SensorDataQoS(),
     std::bind(&PCLLocalization::cloudReceived, this, std::placeholders::_1));
-
-  imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
-    "imu", rclcpp::SensorDataQoS(),
-    std::bind(&PCLLocalization::imuReceived, this, std::placeholders::_1));
 
   RCLCPP_INFO(get_logger(), "initializePubSub end");
 }
@@ -303,21 +265,20 @@ void PCLLocalization::initialPoseReceived(const geometry_msgs::msg::PoseWithCova
     return;
   }
   initialpose_recieved_ = true;
-  time_to_localize = true;
   corrent_pose_with_cov_stamped_ptr_ = msg;
-  pose_pub_->publish(*corrent_pose_with_cov_stamped_ptr_);
 
   geometry_msgs::msg::TransformStamped transform_stamped;
   transform_stamped.header.stamp = msg->header.stamp;
   transform_stamped.header.frame_id = global_frame_id_;
   // transform_stamped.child_frame_id = base_frame_id_;
-  transform_stamped.child_frame_id = odom_frame_id_;
-  transform_stamped.transform.translation.x = msg->pose.pose.position.x;
-  transform_stamped.transform.translation.y = msg->pose.pose.position.y;
-  transform_stamped.transform.translation.z = msg->pose.pose.position.z; 
-  transform_stamped.transform.rotation = msg->pose.pose.orientation;
-  broadcaster_.sendTransform(transform_stamped);
-  cloudReceived(last_scan_ptr_);
+
+  // transform_stamped.child_frame_id = odom_frame_id_;
+  // transform_stamped.transform.translation.x = msg->pose.pose.position.x;
+  // transform_stamped.transform.translation.y = msg->pose.pose.position.y;
+  // transform_stamped.transform.translation.z = msg->pose.pose.position.z; 
+  // transform_stamped.transform.rotation = msg->pose.pose.orientation;
+  // broadcaster_.sendTransform(transform_stamped);
+  // cloudReceived(last_scan_ptr_);
   RCLCPP_INFO(get_logger(), "initialPoseReceived end");
 }
 
@@ -349,103 +310,12 @@ void PCLLocalization::mapReceived(const sensor_msgs::msg::PointCloud2::SharedPtr
 
 void PCLLocalization::TimerCb()
 {
-  RCLCPP_INFO(get_logger(), "Time To localize Received");
-  time_to_localize=true;
-}
-
-void PCLLocalization::odomReceived(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
-{
-  if (!use_odom_ || !initialpose_recieved_) {return;}
-  // RCLCPP_INFO(get_logger(), "odomReceived");
-
-    lastTransform.header.stamp = msg ->header.stamp;
-    broadcaster_.sendTransform(lastTransform);  
-    
-    double current_odom_received_time = msg->header.stamp.sec +
-    msg->header.stamp.nanosec * 1e-9;
-  double dt_odom = current_odom_received_time - last_odom_received_time_;
-  last_odom_received_time_ = current_odom_received_time;
-  if (dt_odom > 1.0 /* [sec] */) {
-    RCLCPP_WARN(this->get_logger(), "odom time interval is too large");
-    return;
-  }
-  if (dt_odom < 0.0 /* [sec] */) {
-    RCLCPP_WARN(this->get_logger(), "odom time interval is negative");
-    return;
-  }
-
-  tf2::Quaternion previous_quat_tf;
-  double roll, pitch, yaw;
-  tf2::fromMsg(corrent_pose_with_cov_stamped_ptr_->pose.pose.orientation, previous_quat_tf);
-
-  tf2::Matrix3x3(previous_quat_tf).getRPY(roll, pitch, yaw);
-
-  roll += msg->twist.twist.angular.x * dt_odom;
-  pitch += msg->twist.twist.angular.y * dt_odom;
-  yaw += msg->twist.twist.angular.z * dt_odom;
-
-  Eigen::Quaterniond quat_eig =
-    Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()) *
-    Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
-    Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ());
-
-  geometry_msgs::msg::Quaternion quat_msg = tf2::toMsg(quat_eig);
-
-  Eigen::Vector3d odom{
-    msg->twist.twist.linear.x,
-    msg->twist.twist.linear.y,
-    msg->twist.twist.linear.z};
-  Eigen::Vector3d delta_position = quat_eig.matrix() * dt_odom * odom;
-
-  corrent_pose_with_cov_stamped_ptr_->pose.pose.position.x += delta_position.x();
-  corrent_pose_with_cov_stamped_ptr_->pose.pose.position.y += delta_position.y();
-  corrent_pose_with_cov_stamped_ptr_->pose.pose.position.z += delta_position.z();
-  corrent_pose_with_cov_stamped_ptr_->pose.pose.orientation = quat_msg;
-}
-
-void PCLLocalization::imuReceived(const sensor_msgs::msg::Imu::ConstSharedPtr msg)
-{
-  if (!use_imu_ || !initialpose_recieved_) {return;}
-
-  sensor_msgs::msg::Imu tf_converted_imu;
-
-  try {
-    const geometry_msgs::msg::TransformStamped transform = tfbuffer_.lookupTransform(
-     base_frame_id_, msg->header.frame_id, tf2::TimePointZero);
-
-    geometry_msgs::msg::Vector3Stamped angular_velocity, linear_acceleration, transformed_angular_velocity, transformed_linear_acceleration;
-    geometry_msgs::msg::Quaternion  transformed_quaternion;
-
-    angular_velocity.header = msg->header;
-    angular_velocity.vector = msg->angular_velocity;
-    linear_acceleration.header = msg->header;
-    linear_acceleration.vector = msg->linear_acceleration;
-
-    tf2::doTransform(angular_velocity, transformed_angular_velocity, transform);
-    tf2::doTransform(linear_acceleration, transformed_linear_acceleration, transform);
-
-    tf_converted_imu.angular_velocity = transformed_angular_velocity.vector;
-    tf_converted_imu.linear_acceleration = transformed_linear_acceleration.vector;
-    tf_converted_imu.orientation = transformed_quaternion;
-
-  }
-  catch (tf2::TransformException& ex)
-  {
-    std::cout << "Failed to lookup transform" << std::endl;
-    RCLCPP_WARN(this->get_logger(), "Failed to lookup transform.");
-    return;
-  }
-
-  Eigen::Vector3f angular_velo{tf_converted_imu.angular_velocity.x, tf_converted_imu.angular_velocity.y,
-    tf_converted_imu.angular_velocity.z};
-  Eigen::Vector3f acc{tf_converted_imu.linear_acceleration.x, tf_converted_imu.linear_acceleration.y, tf_converted_imu.linear_acceleration.z};
-  Eigen::Quaternionf quat{msg->orientation.w, msg->orientation.x, msg->orientation.y,
-    msg->orientation.z};
-  double imu_time = msg->header.stamp.sec +
-    msg->header.stamp.nanosec * 1e-9;
-
-  lidar_undistortion_.getImu(angular_velo, acc, quat, imu_time);
-
+  // RCLCPP_INFO(get_logger(), "Time To localize Received");
+  // lastTransform.header.stamp = msg ->header.stamp;
+  lastTransform.header.stamp = this->get_clock()->now();
+  broadcaster_.sendTransform(lastTransform);
+  // return;
+  // }
 }
 
 void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
@@ -453,13 +323,8 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
 
   base2lidar =tfbuffer_.lookupTransform(
     base_frame_id_, lidar_frame_id, tf2::TimePointZero); 
-  if (!map_recieved_ || !initialpose_recieved_) {return;}
-  if (!time_to_localize){
-    lastTransform.header.stamp = msg ->header.stamp;
-    broadcaster_.sendTransform(lastTransform);
-    return;
-  }
-  time_to_localize = false;
+  if (!map_recieved_ || !initialpose_recieved_ ) {return;}
+  initialpose_recieved_ = false;
   RCLCPP_INFO(get_logger(), "cloudReceived");
   pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>);
   pcl::fromROSMsg(*msg, *cloud_ptr);
@@ -471,11 +336,6 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
   geometry_msgs::msg::TransformStamped lidar2base;
   lidar2base.transform = tf2::toMsg(b2l.inverse());
 
-  if (use_imu_) {
-    double received_time = msg->header.stamp.sec +
-      msg->header.stamp.nanosec * 1e-9;
-    lidar_undistortion_.adjustDistortion(cloud_ptr, received_time);
-  }
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr filtered_cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>());
   voxel_grid_filter_.setInputCloud(cloud_ptr);
@@ -543,7 +403,6 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
   corrent_pose_with_cov_stamped_ptr_->pose.pose.position.z = static_cast<double>(final_transformation(2, 3));
   corrent_pose_with_cov_stamped_ptr_->pose.pose.orientation = quat_msg;
 
-  pose_pub_->publish(*corrent_pose_with_cov_stamped_ptr_);
 
   // geometry_msgs::msg::TransformStamped transform_stamped;
   // transform_stamped.header.stamp = msg->header.stamp;
@@ -584,13 +443,6 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
   tf2::impl::Converter<false, true>::convert(latest_tf_.inverse(), transform_stamped.transform);
   broadcaster_.sendTransform(transform_stamped);
   lastTransform = transform_stamped;
-
-  geometry_msgs::msg::PoseStamped::SharedPtr pose_stamped_ptr(new geometry_msgs::msg::PoseStamped);
-  pose_stamped_ptr->header.stamp = msg->header.stamp;
-  pose_stamped_ptr->header.frame_id = global_frame_id_;
-  pose_stamped_ptr->pose = corrent_pose_with_cov_stamped_ptr_->pose.pose;
-  path_ptr_->poses.push_back(*pose_stamped_ptr);
-  path_pub_->publish(*path_ptr_);
 
   last_scan_ptr_ = msg;
 

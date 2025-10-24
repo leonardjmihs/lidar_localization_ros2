@@ -57,8 +57,6 @@ public:
   void initializeRegistration();
   void initialPoseReceived(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
   void mapReceived(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
-  void odomReceived(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
-  void imuReceived(const sensor_msgs::msg::Imu::ConstSharedPtr msg);
   void cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
 
   void TimerCb();
@@ -71,20 +69,12 @@ public:
 
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::ConstSharedPtr
     initial_pose_sub_;
-  rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr
-    pose_pub_;
-  rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>::SharedPtr
-    path_pub_;
   rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::PointCloud2>::SharedPtr
     initial_map_pub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::ConstSharedPtr
     map_sub_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::ConstSharedPtr
-    odom_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::ConstSharedPtr
     cloud_sub_;
-  rclcpp::Subscription<sensor_msgs::msg::Imu>::ConstSharedPtr
-    imu_sub_;
 
   rclcpp::TimerBase::SharedPtr update_timer_;
 
@@ -113,7 +103,6 @@ public:
   double ndt_step_size_;
   double transform_epsilon_;
   double voxel_leaf_size_;
-  bool use_pcd_map_{false};
   std::string map_path_;
   bool set_initial_pose_{false};
   double initial_pose_x_;
